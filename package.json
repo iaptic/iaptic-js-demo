@@ -1,0 +1,13 @@
+{
+  "name": "stripe-subscription-demo",
+  "version": "1.0.0",
+  "description": "Stripe subscription integration demo",
+  "scripts": {
+    "start": "serve .",
+    "dev": "serve . -l 3000"
+  },
+  "dependencies": {
+    "@tabler/core": "^1.0.0-beta20",
+    "serve": "^14.2.1"
+  }
+} 

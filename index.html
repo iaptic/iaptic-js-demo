@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Plans</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <link rel="stylesheet" href="node_modules/@tabler/core/dist/css/tabler.min.css">
+    <script src="node_modules/@tabler/core/dist/js/tabler.min.js" defer></script>
+    <style>
+        .pricing-container {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            padding: 2rem;
+            flex-wrap: wrap;
+        }
+        .price-card {
+            width: 300px;
+        }
+        #message-container {
+            max-width: 600px;
+            margin: 1rem auto;
+            padding: 0 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="container-xl">
+            <div class="page-header d-print-none">
+                <div class="container-xl">
+                    <div class="row g-2 align-items-center">
+                        <div class="col">
+                            <h2 class="page-title">
+                                Subscription Plans
+                            </h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="message-container"></div>
+            <div id="subscription-container" class="mb-4"></div>
+            <div id="pricing-container" class="pricing-container"></div>
+        </div>
+    </div>
+    <script src="iaptic.js"></script>
+    <script src="credentials.js"></script>
+    <script src="index.js"></script>
+</body>
+</html>
