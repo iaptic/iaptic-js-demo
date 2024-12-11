@@ -1,20 +1,5 @@
 // Direct Stripe usage example (without Iaptic)
-const stripe = new IapticStripe(window.IAPTIC_STRIPE_CREDENTIALS);
-
-function formatBillingPeriod(period) {
-    // Convert ISO 8601 duration to human readable format
-    // e.g., "P1M" -> "Monthly", "P1Y" -> "Yearly"
-    const match = period.match(/P(\d+)([YMWD])/);
-    if (!match) return period;
-    const [_, count, unit] = match;
-    switch (unit) {
-        case 'Y': return count === '1' ? 'Yearly' : `Every ${count} years`;
-        case 'M': return count === '1' ? 'Monthly' : `Every ${count} months`;
-        case 'W': return count === '1' ? 'Weekly' : `Every ${count} weeks`;
-        case 'D': return count === '1' ? 'Daily' : `Every ${count} days`;
-        default: return period;
-    }
-}
+const iaptic = new IapticStripe(window.IAPTIC_STRIPE_CREDENTIALS);
 
 function showMessage(type) {
     const container = document.getElementById('message-container');
@@ -56,20 +41,19 @@ function showMessage(type) {
     container.scrollIntoView({ behavior: 'smooth' });
 }
 
-function displaySubscriptionDetails(details) {
+function displaySubscriptionDetails(products, purchases) {
     const container = document.getElementById('subscription-container');
     if (!container) return;
 
-    if (details && details.purchases && details.purchases.length > 0) {
-        const purchase = details.purchases[0];
-        const amount = (purchase.amountMicros / 1000000).toFixed(2);
+    if (purchases && purchases.length > 0) {
+        const purchase = purchases.find(p => !p.cancelationReason) || purchases[0];
         const startDate = new Date(purchase.purchaseDate).toLocaleDateString();
         const lastRenewal = new Date(purchase.lastRenewalDate).toLocaleDateString();
         const nextRenewal = new Date(purchase.expirationDate).toLocaleDateString();
         
         // Find the corresponding product
         const productId = purchase.productId.replace('stripe:', '');
-        const product = window.availableProducts?.find(p => p.id === productId);
+        const product = products?.find(p => p.id === productId);
         const offer = product?.offers.find(o => o.id === purchase.offerId);
         
         container.innerHTML = `
@@ -91,11 +75,11 @@ function displaySubscriptionDetails(details) {
                         ` : ''}
                         <tr>
                             <td class="text-muted">Amount:</td>
-                            <td>${stripe.formatCurrency(purchase.amountMicros, purchase.currency)}</td>
+                            <td>${iaptic.formatCurrency(purchase.amountMicros, purchase.currency)}</td>
                         </tr>
                         <tr>
                             <td class="text-muted">Billing Period:</td>
-                            <td>${offer ? formatBillingPeriod(offer.pricingPhases[0].billingPeriod) : 'Recurring'}</td>
+                            <td>${offer && product.type === 'paid subscription' ? iaptic.formatBillingPeriodEN(offer.pricingPhases.slice(-1)[0].billingPeriod) : 'Recurring'}</td>
                         </tr>
                         <tr>
                             <td class="text-muted">Status:</td>
@@ -130,11 +114,13 @@ function displaySubscriptionDetails(details) {
                     <div class="mt-4">
                         <h4>Change Plan</h4>
                         <div class="row g-3">
-                            ${window.availableProducts
+                            ${products
                                 ?.filter(product => {
+                                    // Only keep subscription products
+                                    if (product.type !== 'paid subscription') return false;
                                     // Only keep products with matching currency offers
                                     const hasMatchingOffers = product.offers.some(offer => 
-                                        offer.pricingPhases[0].currency.toLowerCase() === purchase.currency.toLowerCase()
+                                        offer.pricingPhases.slice(-1)[0].currency.toLowerCase() === purchase.currency.toLowerCase()
                                     );
                                     // Keep if it's purchasable or if it's the current plan
                                     return (hasMatchingOffers && product.metadata?.canPurchase !== 'false') || 
@@ -144,17 +130,17 @@ function displaySubscriptionDetails(details) {
                                 .sort((a, b) => {
                                     const getMonthlyPrice = (product) => {
                                         const monthlyOffer = product.offers.find(o => 
-                                            o.pricingPhases[0].currency.toLowerCase() === 'usd' &&
-                                            o.pricingPhases[0].billingPeriod.includes('M')
+                                            o.pricingPhases.slice(-1)[0].currency.toLowerCase() === 'usd' &&
+                                            o.pricingPhases.slice(-1)[0].billingPeriod.includes('M')
                                         );
-                                        return monthlyOffer ? monthlyOffer.pricingPhases[0].priceMicros : 0;
+                                        return monthlyOffer ? monthlyOffer.pricingPhases.slice(-1)[0].priceMicros : 0;
                                     };
                                     return getMonthlyPrice(a) - getMonthlyPrice(b);
                                 })
                                 .map(product => {
                                     const isCurrentPlan = product.id === productId;
                                     const matchingOffers = product.offers.filter(offer => 
-                                        offer.pricingPhases[0].currency.toLowerCase() === purchase.currency.toLowerCase()
+                                        offer.pricingPhases.slice(-1)[0].currency.toLowerCase() === purchase.currency.toLowerCase()
                                     );
                                     
                                     if (matchingOffers.length === 0) return '';
@@ -163,8 +149,8 @@ function displaySubscriptionDetails(details) {
                                     
                                     // Sort offers by billing period (monthly first)
                                     const sortedOffers = matchingOffers.sort((a, b) => {
-                                        const aIsMonthly = a.pricingPhases[0].billingPeriod.includes('M');
-                                        const bIsMonthly = b.pricingPhases[0].billingPeriod.includes('M');
+                                        const aIsMonthly = a.pricingPhases.slice(-1)[0].billingPeriod.includes('M');
+                                        const bIsMonthly = b.pricingPhases.slice(-1)[0].billingPeriod.includes('M');
                                         return aIsMonthly ? -1 : 1;
                                     });
                                     const isCurrentOfferCancelled = purchase.cancelationReason;
@@ -194,14 +180,14 @@ function displaySubscriptionDetails(details) {
                                                     
                                                     <div class="pricing-options">
                                                         ${sortedOffers.map(offer => {
-                                                            const phase = offer.pricingPhases[0];
+                                                            const phase = offer.pricingPhases.slice(-1)[0];
                                                             const isCurrentOffer = offer.id === purchase.offerId;
-                                                            const period = formatBillingPeriod(phase.billingPeriod).toLowerCase();
+                                                            const period = iaptic.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
                                                             
                                                             return `
                                                                 <div class="mb-2 text-center">
                                                                     <div class="h4 mb-1">
-                                                                        ${stripe.formatCurrency(phase.priceMicros, phase.currency)}
+                                                                        ${iaptic.formatCurrency(phase.priceMicros, phase.currency)}
                                                                         <small class="text-muted">/${period}</small>
                                                                     </div>
                                                                     ${isCurrentOffer 
@@ -276,29 +262,45 @@ function displaySubscriptionDetails(details) {
     }
 }
 
+function showLoadingSpinner(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="text-center p-4">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="text-muted mt-2">Loading...</div>
+        </div>
+    `;
+}
+
+/** @returns {Purchase[]} */
 async function displayPurchases() {
+    const container = document.getElementById('subscription-container');
+    if (!container) return [];
+    
+    showLoadingSpinner('subscription-container');
+    
     try {
-        const data = await stripe.getPurchases();
-        if (data.purchases && data.purchases.length > 0) {
-            displaySubscriptionDetails(data);
+        const purchases = await iaptic.getPurchases();
+        if (purchases && purchases.length > 0) {
+            displaySubscriptionDetails(await iaptic.getProducts(), purchases);
+        } else {
+            container.innerHTML = ''; // Clear the container if no subscription
         }
+        return purchases;
     } catch (error) {
         // Silently fail if no purchases found
         console.log('No active purchases found:', error);
+        container.innerHeML = '';
+        return [];
     }
 }
 
 async function checkUrlHash() {
     const hash = window.location.hash.substring(1);
     if (hash === 'success') {
-        try {
-            const status = await stripe.getPurchases();
-            console.log('Subscription status:', status);
-            showMessage('success', status);
-        } catch (error) {
-            console.error('Failed to get subscription status:', error);
-            showMessage('success'); // Show basic success message if status fetch fails
-        }
+        showMessage('success');
         history.replaceState(null, '', window.location.pathname);
     } else if (hash === 'cancel') {
         showMessage('cancel');
@@ -312,9 +314,6 @@ async function checkUrlHash() {
     }
 }
 
-// Store products globally to access them when showing subscription details
-let availableProducts = [];
-
 function getSupportLevelLabel(level) {
     switch (level) {
         case '0': return 'Basic Support';
@@ -324,110 +323,197 @@ function getSupportLevelLabel(level) {
     }
 }
 
-async function displayPrices() {
+async function displayPrices(purchases) {
+    const subscriptionContainer = document.getElementById('pricing-container');
+    const onetimeContainer = document.getElementById('onetime-container');
+    if (!subscriptionContainer || !onetimeContainer) return;
+    
+    showLoadingSpinner('pricing-container');
+    showLoadingSpinner('onetime-container');
+    
     try {
-        const products = await stripe.getProducts();
-        window.availableProducts = products; // Store for later use
+        const products = await iaptic.refreshProducts();
         
         // Refresh subscription details now that we have product information
-        const purchaseData = await stripe.getPurchases();
-        const hasActiveSubscription = purchaseData.purchases && purchaseData.purchases.length > 0;
+        const hasActiveSubscription = purchases && purchases.length > 0;
+        displaySubscriptionDetails(products, purchases);
         
-        displaySubscriptionDetails(purchaseData);
+        // Clear both containers
+        subscriptionContainer.innerHTML = '';
+        onetimeContainer.innerHTML = '';
         
-        const container = document.getElementById('pricing-container');
-        container.innerHTML = '';
+        // Split products by type
+        const subscriptionProducts = products.filter(p => 
+            p.type === 'paid subscription' && p.metadata?.canPurchase !== 'false'
+        );
+        const otherProducts = products.filter(p => 
+            (p.type === 'non_consumable' || p.type === 'consumable') && 
+            p.metadata?.canPurchase !== 'false'
+        );
         
         if (hasActiveSubscription) {
-            // Show manage subscription button instead of products
-            const manageButton = document.createElement('div');
-            manageButton.innerHTML = `
+            subscriptionContainer.innerHTML = `
                 <div class="text-center">
                     <button class="btn btn-primary" onclick="handleManageSubscription()">
                         Manage Subscription
                     </button>
                 </div>
             `;
-            container.appendChild(manageButton);
-            return;
+        } else if (subscriptionProducts.length > 0) {
+            subscriptionContainer.innerHTML = `
+                <h3 class="mb-3">Subscription Plans</h3>
+                <div class="row w-100 g-3">
+                    ${renderSubscriptionProducts(subscriptionProducts)}
+                </div>
+            `;
         }
         
-        // Show products only if user is not subscribed
-        container.innerHTML = `
-            <div class="row w-100 g-3">
-                ${products
-                    .filter(product => product.metadata?.canPurchase !== 'false')
-                    // Sort by monthly USD price
-                    .sort((a, b) => {
-                        const getMonthlyPrice = (product) => {
-                            const monthlyOffer = product.offers.find(o => 
-                                o.pricingPhases[0].currency.toLowerCase() === 'usd' &&
-                                o.pricingPhases[0].billingPeriod.includes('M')
-                            );
-                            return monthlyOffer ? monthlyOffer.pricingPhases[0].priceMicros : 0;
-                        };
-                        return getMonthlyPrice(a) - getMonthlyPrice(b);
-                    })
-                    .map(product => {
-                        // Sort offers by billing period (monthly first)
-                        const sortedOffers = product.offers.sort((a, b) => {
-                            const aIsMonthly = a.pricingPhases[0].billingPeriod.includes('M');
-                            const bIsMonthly = b.pricingPhases[0].billingPeriod.includes('M');
-                            return aIsMonthly ? -1 : 1;
-                        });
-
-                        return `
-                            <div class="col-3">
-                                <div class="card h-100">
-                                    <div class="card-body">
-                                        <div class="text-center mb-3">
-                                            <h5 class="mb-1">${product.title}</h5>
-                                            <div class="text-muted small">
-                                                ${product.description || ''}
-                                            </div>
-                                        </div>
-                                        <div class="text-center mb-3">
-                                            <div class="mb-1">
-                                                <span class="badge bg-blue-lt">
-                                                    ${product.metadata?.quota || 0} requests/month
-                                                </span>
-                                            </div>
-                                            <div>
-                                                <span class="badge bg-purple-lt">
-                                                    ${getSupportLevelLabel(product.metadata?.supportLevel)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        
-                                        <div class="pricing-options">
-                                            ${sortedOffers.map(offer => {
-                                                const phase = offer.pricingPhases[0];
-                                                const amount = (phase.priceMicros / 1000000).toFixed(2);
-                                                const period = formatBillingPeriod(phase.billingPeriod).toLowerCase();
-                                                
-                                                return `
-                                                    <div class="mb-2 text-center">
-                                                        <div class="h4 mb-1">
-                                                            ${stripe.formatCurrency(phase.priceMicros, phase.currency)}
-                                                            <small class="text-muted">/${period}</small>
-                                                        </div>
-                                                        <button class="btn btn-primary btn-sm" 
-                                                                onclick="handleSubscription('${offer.id}')">
-                                                            Subscribe ${period}
-                                                        </button>
-                                                    </div>
-                                                `;
-                                            }).join('')}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    }).join('')}
-            </div>
-        `;
+        if (otherProducts.length > 0) {
+            onetimeContainer.innerHTML = `
+                <h3 class="mb-3">One-time Purchases</h3>
+                <div class="row w-100 g-3">
+                    ${renderOtherProducts(otherProducts)}
+                </div>
+            `;
+        }
     } catch (error) {
         console.error('Error loading prices:', error);
+    }
+}
+
+// Helper function to render subscription products
+function renderSubscriptionProducts(products) {
+    return products
+        // Sort by monthly USD price
+        .sort((a, b) => {
+            const getMonthlyPrice = (product) => {
+                const monthlyOffer = product.offers.find(o => 
+                    o.pricingPhases.slice(-1)[0].currency.toLowerCase() === 'usd' &&
+                    o.pricingPhases.slice(-1)[0].billingPeriod.includes('M')
+                );
+                return monthlyOffer ? monthlyOffer.pricingPhases.slice(-1)[0].priceMicros : 0;
+            };
+            return getMonthlyPrice(a) - getMonthlyPrice(b);
+        })
+        .map(product => {
+            // Sort offers by billing period (monthly first)
+            const sortedOffers = product.offers.sort((a, b) => {
+                const aIsMonthly = a.pricingPhases.slice(-1)[0].billingPeriod.includes('M');
+                const bIsMonthly = b.pricingPhases.slice(-1)[0].billingPeriod.includes('M');
+                return aIsMonthly ? -1 : 1;
+            });
+
+            return `
+                <div class="col-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="text-center mb-3">
+                                <h5 class="mb-1">${product.title}</h5>
+                                <div class="text-muted small">
+                                    ${product.description || ''}
+                                </div>
+                            </div>
+                            <div class="text-center mb-3">
+                                ${product.metadata?.quota ? `
+                                    <div class="mb-1">
+                                        <span class="badge bg-blue-lt">
+                                            ${product.metadata.quota} requests/month
+                                        </span>
+                                    </div>
+                                ` : ''}
+                                ${product.metadata?.supportLevel ? `
+                                    <div>
+                                        <span class="badge bg-purple-lt">
+                                            ${getSupportLevelLabel(product.metadata.supportLevel)}
+                                        </span>
+                                    </div>
+                                ` : ''}
+                            </div>
+                            
+                            <div class="pricing-options">
+                                ${renderSubscriptionOffers(sortedOffers)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+}
+
+// Helper function to render other products (non-subscription)
+function renderOtherProducts(products) {
+    return products.map(product => {
+        const offer = product.offers[0]; // Usually only one offer for non-subscription products
+        const phase = offer?.pricingPhases.slice(-1)[0];
+        
+        return `
+            <div class="col-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-center mb-3">
+                            <h5 class="mb-1">${product.title}</h5>
+                            <div class="text-muted small">
+                                ${product.description || ''}
+                            </div>
+                        </div>
+                        ${product.metadata?.quota ? `
+                            <div class="text-center mb-3">
+                                <span class="badge bg-blue-lt">
+                                    ${product.metadata.quota} requests
+                                </span>
+                            </div>
+                        ` : ''}
+                        <div class="text-center">
+                            <div class="h4 mb-3">
+                                ${phase ? iaptic.formatCurrency(phase.priceMicros, phase.currency) : 'Free'}
+                            </div>
+                            <button class="btn btn-primary" 
+                                    onclick="handlePurchase('${offer?.id}')">
+                                Purchase
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Helper function to render subscription offers
+function renderSubscriptionOffers(offers) {
+    return offers.map(offer => {
+        const phase = offer.pricingPhases.slice(-1)[0];
+        const period = iaptic.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
+        const isFree = phase.priceMicros === 0;
+        
+        return `
+            <div class="mb-2 text-center">
+                <div class="h4 mb-1">
+                    ${iaptic.formatCurrency(phase.priceMicros, phase.currency)}
+                    <small class="text-muted">/${period}</small>
+                </div>
+                ${!isFree ? `
+                    <button class="btn btn-primary btn-sm" 
+                            onclick="handleSubscription('${offer.id}')">
+                        Subscribe ${period}
+                    </button>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+// Add this new function to handle one-time purchases
+async function handlePurchase(offerId) {
+    try {
+        await iaptic.initCheckoutSession({
+            offerId,
+            applicationUsername: 'user123',
+            successUrl: returnUrl('success'),
+            cancelUrl: returnUrl('cancel')
+        });
+    } catch (error) {
+        console.error('Error creating purchase:', error);
     }
 }
 
@@ -437,7 +523,7 @@ function returnUrl(withHash) {
 
 async function handleSubscription(offerId) {
     try {
-        await stripe.initCheckoutSession({
+        await iaptic.initCheckoutSession({
             offerId,
             applicationUsername: 'user123',
             successUrl: returnUrl('success'),
@@ -450,7 +536,7 @@ async function handleSubscription(offerId) {
 
 async function handleManageSubscription() {
     try {
-        await stripe.redirectToCustomerPortal({
+        await iaptic.redirectToCustomerPortal({
             returnUrl: window.location.href
         });
     } catch (error) {
@@ -460,7 +546,7 @@ async function handleManageSubscription() {
 
 async function handlePlanChange(newOfferId) {
     try {
-        const newPurchase = await stripe.changePlan({
+        const newPurchase = await iaptic.changePlan({
             offerId: newOfferId
         });
         
@@ -474,7 +560,7 @@ async function handlePlanChange(newOfferId) {
         showMessage('success-plan-change');
         
         // Refresh prices display to show updated current plan
-        displayPrices();
+        displayPrices([newPurchase]);
     } catch (error) {
         console.error('Error changing plan:', error);
         showMessage('error-plan-change');
@@ -483,8 +569,8 @@ async function handlePlanChange(newOfferId) {
 
 // Initialize the display when the page loads
 document.addEventListener('DOMContentLoaded', async () => {
-    await displayPurchases(); // Check for existing purchases first
-    displayPrices();
+    const purchases = await displayPurchases();
+    displayPrices(purchases);
     checkUrlHash();
 });
 

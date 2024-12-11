@@ -88,15 +88,33 @@
  */
 
 /**
+ * @typedef {Object} CachedProducts
+ * @property {Product[]} products - Array of products
+ * @property {number} fetchedAt - Timestamp when products were fetched
+ */
+
+/**
+ * @typedef {Object} ScheduledRefresh
+ * @property {string} id - Unique identifier for this refresh
+ * @property {string} subscriptionId - ID of the subscription to refresh
+ * @property {number} scheduledAt - Timestamp when refresh should occur
+ * @property {boolean} completed - Whether the refresh has been performed
+ * @property {boolean} inProgress - Whether a refresh is currently in progress
+ * @property {string} reason - Why this refresh was scheduled
+ */
+
+/**
  * IapticStripe class handles subscription management using Iaptic's subscription management service.
  */
 class IapticStripe {
+  /** @type {string} Version number of the IapticStripe class */
+  static VERSION = '1.0.0';
 
   /**
    * @param {Object} config - Configuration object
    * @param {string} config.stripePublicKey - Stripe public key
    * @param {string} config.appName - Iaptic app name
-   * @param {string} config.apiKey - Iaptic API key
+   * @param {string} config.apiKey - Iaptic Public API key
    * @param {string} config.customIapticUrl - Custom Iaptic API URL (optional)
    */
   constructor(config) {
@@ -114,6 +132,7 @@ class IapticStripe {
     }
     this.appName = config.appName;
     this.apiKey = config.apiKey;
+    this.refreshScheduler = new IapticStripe.RefreshScheduler(this);
   }
 
   /**
@@ -121,15 +140,54 @@ class IapticStripe {
    * @private
    */
   authorizationHeader() {
-    return `Basic ${btoa(`${this.appName}:${this.apiKey}`)}`;
+    return `Basic ${IapticStripe.Utils.base64Encode(`${this.appName}:${this.apiKey}`)}`;
   }
 
   /**
-   * Fetches available products with price.
-   * 
+   * Get cached products from localStorage
+   * @private
+   * @returns {CachedProducts|null}
+   */
+  _getCachedProducts() {
+    return IapticStripe.Utils.storageGet('iaptic_products');
+  }
+
+  /**
+   * Store products in localStorage cache
+   * @private
+   * @param {Product[]} products
+   */
+  _setCachedProducts(products) {
+    IapticStripe.Utils.storageSet('iaptic_products', {
+      products,
+      fetchedAt: Date.now()
+    });
+  }
+
+  /**
+   * Get cached products or fetch them if not available
    * @returns {Promise<Product[]>} List of products and prices
    */
   async getProducts() {
+    const cached = this._getCachedProducts();
+    if (cached?.products) {
+      return cached.products;
+    }
+    return this.refreshProducts();
+  }
+
+  /**
+   * Fetches available products with price and updates cache.
+   * 
+   * @returns {Promise<Product[]>} List of products and prices
+   */
+  async refreshProducts() {
+    // Check if we have recent cached data (less than 1 minute old)
+    const cached = this._getCachedProducts();
+    if (cached?.products && cached.fetchedAt > Date.now() - 60000) {
+      return cached.products;
+    }
+
     try {
       const response = await fetch(`${this.iapticUrl}/v3/stripe/prices`, {
         headers: {
@@ -147,6 +205,8 @@ class IapticStripe {
         throw new Error('Invalid response from Iaptic');
       }
 
+      // Update cache
+      this._setCachedProducts(data.products);
       return data.products;
     } catch (error) {
       console.error('Error fetching prices:', error);
@@ -204,12 +264,14 @@ class IapticStripe {
   }
 
   /**
-   * Clear all stored access keys
+   * Clear all stored data
    */
   clearStoredData() {
     localStorage.removeItem('iaptic_access_keys');
     localStorage.removeItem('iaptic_session_id');
     localStorage.removeItem('iaptic_subscription_id');
+    localStorage.removeItem('iaptic_products'); // Add products cache clearing
+    this.refreshScheduler.clearSchedules();
   }
 
   /**
@@ -220,7 +282,7 @@ class IapticStripe {
    * @param {string} params.applicationUsername - User identifier
    * @param {string} params.successUrl - URL to redirect on success
    * @param {string} params.cancelUrl - URL to redirect on cancel
-   * @returns {Promise<CheckoutResponse>} Checkout session response
+   * @returns {Promise<void>}
    */
   async initCheckoutSession({
     offerId,
@@ -245,31 +307,39 @@ class IapticStripe {
           })
         }
       );
-      
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to create checkout session');
+        throw new Error('Failed to create checkout session');
       }
-      
+
       /** @type {CheckoutResponse} */
       const data = await response.json();
-      if (!data.ok || !data.sessionId) {
+      if (!data.ok || !data.url) {
         throw new Error('Invalid checkout session response');
       }
 
-      // Store session ID and access key
-      localStorage.setItem('iaptic_session_id', data.sessionId);
-      if (data.accessKey) {
-        this._storeAccessKey(data.sessionId, data.accessKey);
+      // Store both accessKey and sessionId
+      if (data.sessionId) {
+        this._setSessionId(data.sessionId);
+        if (data.accessKey) {
+          this._storeAccessKey(data.sessionId, data.accessKey);
+        }
       }
-      
-      return this.stripe.redirectToCheckout({ 
-        sessionId: data.sessionId 
-      });
+
+      // Redirect to Stripe Checkout
+      window.location.href = data.url;
     } catch (error) {
-      console.error('Error creating subscription:', error);
+      console.error('Error creating checkout session:', error);
       throw error;
     }
+  }
+
+  /**
+   * Set the session ID
+   * @param {string} id - The session ID to set
+   */
+  _setSessionId(id) {
+    localStorage.setItem('iaptic_session_id', id);
   }
 
   /**
@@ -324,7 +394,10 @@ class IapticStripe {
 
     try {
       const response = await fetch(
-        `${this.iapticUrl}/v3/stripe/purchases/${id}?access_key=${encodeURIComponent(accessKey)}`,
+        IapticStripe.Utils.buildUrl(
+          `${this.iapticUrl}/v3/stripe/purchases/${id}`,
+          { access_key: accessKey }
+        ),
         {
           headers: {
             'Authorization': this.authorizationHeader()
@@ -343,6 +416,11 @@ class IapticStripe {
       if (!data.ok) {
         throw new Error('Invalid subscription status response');
       }
+
+      // Schedule refreshes for each purchase
+      data.purchases.forEach(purchase => {
+        this.refreshScheduler.schedulePurchaseRefreshes(purchase);
+      });
 
       // Store new access keys if provided
       if (data.new_access_keys) {
@@ -474,6 +552,16 @@ class IapticStripe {
         });
       }
 
+      // Schedule refreshes for the updated purchase
+      this.refreshScheduler.schedulePurchaseRefreshes(data.purchase);
+
+      // Also schedule an immediate refresh to catch any quick changes
+      this.refreshScheduler.scheduleRefresh(
+        data.purchase.purchaseId,
+        new Date(Date.now() + 10000), // 10 seconds from now
+        'post-change-verification'
+      );
+
       return data.purchase;
     } catch (error) {
       console.error('Error changing plan:', error);
@@ -545,4 +633,283 @@ class IapticStripe {
       })}`.replace('.00', '');
     }
   }
+
+  /**
+   * Format a billing period from ISO 8601 duration in plain english
+   * @param {string} period - ISO 8601 duration (e.g., "P1M", "P1Y")
+   * @returns {string} Human readable billing period (e.g., "Every 1 month", "Yearly")
+   */
+  formatBillingPeriodEN(period) {
+    if (!period) return '';
+    const match = period.match(/P(\d+)([YMWD])/);
+    if (!match) return period;
+    const [_, count, unit] = match;
+    const displayCount = count === '1' ? '' : ' ' + count;
+    switch (unit) {
+      case 'Y': return count === '1' ? 'Yearly' : `Every${displayCount} years`;
+      case 'M': return count === '1' ? 'Monthly' : `Every${displayCount} months`;
+      case 'W': return count === '1' ? 'Weekly' : `Every${displayCount} weeks`;
+      case 'D': return count === '1' ? 'Daily' : `Every${displayCount} days`;
+      default: return period;
+    }
+  }
+
+  /**
+   * Returns a debug dump of the internal state
+   * @returns {string} Formatted debug information
+   */
+  debugDump() {
+    const dump = {
+      version: IapticStripe.VERSION,
+      config: {
+        iapticUrl: this.iapticUrl,
+        appName: this.appName,
+        apiKey: this.apiKey, // this is iaptic the public (sharable) API key
+      },
+      storage: {
+        sessionId: this.getSessionId(),
+        subscriptionId: this.getSubscriptionId(),
+        accessKeys: this._getStoredAccessKeys(),
+        cachedProducts: this._getCachedProducts(),
+      },
+      refreshScheduler: {
+        schedules: this.refreshScheduler.schedules.map(schedule => ({
+          ...schedule,
+          // Convert timestamp to readable date
+          scheduledAt: new Date(schedule.scheduledAt).toISOString(),
+        })),
+      }
+    };
+
+    return JSON.stringify(dump, null, 2);
+  }
+}
+
+/**
+ * Helper class to manage subscription refresh schedules
+ */
+IapticStripe.RefreshScheduler = class {
+    constructor(iapticStripe) {
+        /** @type {ScheduledRefresh[]} */
+        this.schedules = [];
+        this.iapticStripe = iapticStripe;
+    }
+
+    /**
+     * Set timeout for a specific schedule
+     * @private
+     */
+    setTimeout(schedule) {
+        const delay = schedule.scheduledAt - Date.now();
+        if (delay <= 0) return;
+
+        setTimeout(async () => {
+            if (schedule.completed) return;
+            
+            // Check if there's already a refresh in progress for this subscription
+            const inProgressRefresh = this.schedules.find(s => 
+                s.subscriptionId === schedule.subscriptionId && s.inProgress
+            );
+            if (inProgressRefresh) {
+                console.log(`Skipping refresh for ${schedule.subscriptionId} (${schedule.reason}): another refresh in progress`);
+                return;
+            }
+
+            try {
+                schedule.inProgress = true;
+                await this.iapticStripe.getPurchases(schedule.subscriptionId);
+                schedule.completed = true;
+            } catch (error) {
+                console.error('Error refreshing subscription:', error);
+                
+                // Schedule a retry if this wasn't already a retry attempt
+                if (!schedule.reason.startsWith('retry-')) {
+                    const retryDate = new Date(Date.now() + 30000); // 30 seconds later
+                    this.scheduleRefresh(
+                        schedule.subscriptionId,
+                        retryDate,
+                        `retry-${schedule.reason}`
+                    );
+                }
+            } finally {
+                schedule.inProgress = false;
+            }
+        }, delay);
+    }
+
+    /**
+     * Schedule a refresh for a subscription
+     * @param {string} subscriptionId - Subscription to refresh
+     * @param {Date} date - When to refresh
+     * @param {string} reason - Why this refresh is scheduled
+     */
+    scheduleRefresh(subscriptionId, date, reason) {
+        const schedule = {
+            id: `${subscriptionId}-${date.getTime()}`,
+            subscriptionId,
+            scheduledAt: date.getTime(),
+            completed: false,
+            inProgress: false,
+            reason
+        };
+
+        // Don't schedule if we already have one for this subscription at this time
+        if (this.schedules.some(s => s.id === schedule.id)) {
+            return;
+        }
+
+        this.schedules.push(schedule);
+        this.setTimeout(schedule);
+    }
+
+    /**
+     * Schedule refreshes based on a purchase's important dates
+     * @param {Purchase} purchase
+     */
+    schedulePurchaseRefreshes(purchase) {
+        const expirationDate = new Date(purchase.expirationDate);
+        
+        // 10 seconds before expiration
+        const beforeExpiration = new Date(expirationDate.getTime() - 10000);
+        // 10 seconds after expiration
+        const afterExpiration = new Date(expirationDate.getTime() + 10000);
+
+        const dates = [
+            { date: beforeExpiration, reason: 'pre-expiration' },
+            { date: afterExpiration, reason: 'post-expiration' }
+        ];
+
+        // Schedule all dates that are in the future
+        dates.forEach(({ date, reason }) => {
+            if (date.getTime() > Date.now()) {
+                this.scheduleRefresh(purchase.purchaseId, date, reason);
+            }
+        });
+    }
+
+    /**
+     * Clear all schedules
+     */
+    clearSchedules() {
+        this.schedules = [];
+    }
+}
+
+/**
+ * Browser compatibility helper functions
+ * @private
+ */
+IapticStripe.Utils = class {
+    /**
+     * Base64 encode a string (btoa alternative)
+     * @param {string} str - String to encode
+     * @returns {string} Base64 encoded string
+     */
+    static base64Encode(str) {
+        try {
+            return btoa(str);
+        } catch (e) {
+            // Fallback for older browsers or non-ASCII characters
+            const bytes = new TextEncoder().encode(str);
+            const binString = Array.from(bytes, (x) => String.fromCodePoint(x)).join('');
+            return btoa(binString);
+        }
+    }
+
+    /**
+     * Format a date to ISO string with timezone (for older browsers)
+     * @param {Date} date - Date to format
+     * @returns {string} ISO formatted date string
+     */
+    static toISOString(date) {
+        try {
+            return date.toISOString();
+        } catch (e) {
+            const pad = (num) => String(num).padStart(2, '0');
+            return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${String(date.getUTCMilliseconds()).padStart(3, '0')}Z`;
+        }
+    }
+
+    /**
+     * Parse a JSON string safely
+     * @param {string} str - JSON string to parse
+     * @param {any} defaultValue - Default value if parsing fails
+     * @returns {any} Parsed object or default value
+     */
+    static safeJSONParse(str, defaultValue = null) {
+        try {
+            return JSON.parse(str);
+        } catch (e) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Stringify an object safely
+     * @param {any} obj - Object to stringify
+     * @param {string} defaultValue - Default value if stringification fails
+     * @returns {string} JSON string
+     */
+    static safeJSONStringify(obj, defaultValue = '{}') {
+        try {
+            return JSON.stringify(obj);
+        } catch (e) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Safe localStorage getter
+     * @param {string} key - Key to get
+     * @param {any} defaultValue - Default value if not found or error
+     * @returns {any} Stored value or default
+     */
+    static storageGet(key, defaultValue = null) {
+        try {
+            const value = localStorage.getItem(key);
+            return value ? this.safeJSONParse(value, defaultValue) : defaultValue;
+        } catch (e) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Safe localStorage setter
+     * @param {string} key - Key to set
+     * @param {any} value - Value to store
+     * @returns {boolean} Success status
+     */
+    static storageSet(key, value) {
+        try {
+            localStorage.setItem(key, this.safeJSONStringify(value));
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Create a URL with query parameters
+     * @param {string} baseUrl - Base URL
+     * @param {Object} params - Query parameters
+     * @returns {string} Full URL with encoded parameters
+     */
+    static buildUrl(baseUrl, params) {
+        try {
+            const url = new URL(baseUrl);
+            Object.entries(params).forEach(([key, value]) => {
+                if (value !== undefined && value !== null) {
+                    url.searchParams.append(key, value);
+                }
+            });
+            return url.toString();
+        } catch (e) {
+            // Fallback for older browsers
+            const query = Object.entries(params)
+                .filter(([_, value]) => value !== undefined && value !== null)
+                .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+                .join('&');
+            return query ? `${baseUrl}?${query}` : baseUrl;
+        }
+    }
 }
