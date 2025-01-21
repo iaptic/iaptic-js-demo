@@ -1,5 +1,5 @@
 // Direct Stripe usage example (without Iaptic)
-const iaptic = new IapticStripe(window.IAPTIC_STRIPE_CREDENTIALS);
+const iaptic = IapticJS.createAdapter(window.IAPTIC_STRIPE_CREDENTIALS);
 
 function showMessage(type) {
     const container = document.getElementById('message-container');
@@ -46,7 +46,8 @@ function displaySubscriptionDetails(products, purchases) {
     if (!container) return;
 
     if (purchases && purchases.length > 0) {
-        const purchase = purchases.find(p => !p.cancelationReason) || purchases[0];
+        const subscriptions = purchases.filter(p => p.renewalIntent && p.expirationDate);
+        const purchase = subscriptions.find(p => !p.cancelationReason) || subscriptions[0];
         const startDate = new Date(purchase.purchaseDate).toLocaleDateString();
         const lastRenewal = new Date(purchase.lastRenewalDate).toLocaleDateString();
         const nextRenewal = new Date(purchase.expirationDate).toLocaleDateString();
@@ -75,11 +76,11 @@ function displaySubscriptionDetails(products, purchases) {
                         ` : ''}
                         <tr>
                             <td class="text-muted">Amount:</td>
-                            <td>${iaptic.formatCurrency(purchase.amountMicros, purchase.currency)}</td>
+                            <td>${IapticJS.Utils.formatCurrency(purchase.amountMicros, purchase.currency)}</td>
                         </tr>
                         <tr>
                             <td class="text-muted">Billing Period:</td>
-                            <td>${offer && product.type === 'paid subscription' ? iaptic.formatBillingPeriodEN(offer.pricingPhases.slice(-1)[0].billingPeriod) : 'Recurring'}</td>
+                            <td>${offer && product.type === 'paid subscription' ? IapticJS.Utils.formatBillingPeriodEN(offer.pricingPhases.slice(-1)[0].billingPeriod) : 'Recurring'}</td>
                         </tr>
                         <tr>
                             <td class="text-muted">Status:</td>
@@ -182,12 +183,12 @@ function displaySubscriptionDetails(products, purchases) {
                                                         ${sortedOffers.map(offer => {
                                                             const phase = offer.pricingPhases.slice(-1)[0];
                                                             const isCurrentOffer = offer.id === purchase.offerId;
-                                                            const period = iaptic.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
+                                                            const period = IapticJS.Utils.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
                                                             
                                                             return `
                                                                 <div class="mb-2 text-center">
                                                                     <div class="h4 mb-1">
-                                                                        ${iaptic.formatCurrency(phase.priceMicros, phase.currency)}
+                                                                        ${IapticJS.Utils.formatCurrency(phase.priceMicros, phase.currency)}
                                                                         <small class="text-muted">/${period}</small>
                                                                     </div>
                                                                     ${isCurrentOffer 
@@ -332,7 +333,7 @@ async function displayPrices(purchases) {
     showLoadingSpinner('onetime-container');
     
     try {
-        const products = await iaptic.refreshProducts();
+        const products = await iaptic.getProducts();
         
         // Refresh subscription details now that we have product information
         const hasActiveSubscription = purchases && purchases.length > 0;
@@ -465,7 +466,7 @@ function renderOtherProducts(products) {
                         ` : ''}
                         <div class="text-center">
                             <div class="h4 mb-3">
-                                ${phase ? iaptic.formatCurrency(phase.priceMicros, phase.currency) : 'Free'}
+                                ${phase ? IapticJS.Utils.formatCurrency(phase.priceMicros, phase.currency) : 'Free'}
                             </div>
                             <button class="btn btn-primary" 
                                     onclick="handlePurchase('${offer?.id}')">
@@ -483,13 +484,13 @@ function renderOtherProducts(products) {
 function renderSubscriptionOffers(offers) {
     return offers.map(offer => {
         const phase = offer.pricingPhases.slice(-1)[0];
-        const period = iaptic.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
+        const period = IapticJS.Utils.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
         const isFree = phase.priceMicros === 0;
         
         return `
             <div class="mb-2 text-center">
                 <div class="h4 mb-1">
-                    ${iaptic.formatCurrency(phase.priceMicros, phase.currency)}
+                    ${IapticJS.Utils.formatCurrency(phase.priceMicros, phase.currency)}
                     <small class="text-muted">/${period}</small>
                 </div>
                 ${!isFree ? `
@@ -508,7 +509,7 @@ async function handlePurchase(offerId) {
     try {
         await iaptic.initCheckoutSession({
             offerId,
-            applicationUsername: 'user123',
+            applicationUsername: 'user_dev',
             successUrl: returnUrl('success'),
             cancelUrl: returnUrl('cancel')
         });
@@ -525,7 +526,7 @@ async function handleSubscription(offerId) {
     try {
         await iaptic.initCheckoutSession({
             offerId,
-            applicationUsername: 'user123',
+            applicationUsername: 'user_dev',
             successUrl: returnUrl('success'),
             cancelUrl: returnUrl('cancel')
         });
@@ -547,7 +548,7 @@ async function handleManageSubscription() {
 async function handlePlanChange(newOfferId) {
     try {
         const newPurchase = await iaptic.changePlan({
-            offerId: newOfferId
+            offerId: newOfferId,
         });
         
         // Update the display with the new purchase information
