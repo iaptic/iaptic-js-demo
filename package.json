@@ -1,7 +1,7 @@
 {
-  "name": "stripe-subscription-demo",
+  "name": "iaptic-js-demo",
   "version": "1.0.0",
-  "description": "Stripe subscription integration demo",
+  "description": "Demonstration project using iaptic-js with the Stripe adapter for subscriptions",
   "scripts": {
     "start": "serve .",
     "dev": "serve . -l 4000"
