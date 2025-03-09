@@ -61,7 +61,7 @@ To retrieve product and price data from Stripe via Iaptic, you will need to embe
    ```
    cd iaptic-js-demo
    ```
-3. Install all dependencies:
+3. Install all dependencies (**required** for the demo to work):
    ```
    npm install
    ```
@@ -73,6 +73,8 @@ To retrieve product and price data from Stripe via Iaptic, you will need to embe
 ---
 
 ## Usage
+
+**Note:** Make sure you have completed the installation steps above, including running `npm install`, before starting the demo.
 
 This project can be run by serving the files locally with a static server (using the "serve" package).  
 
