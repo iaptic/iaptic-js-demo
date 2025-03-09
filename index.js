@@ -1,4 +1,4 @@
-// Direct Stripe usage example (without Iaptic)
+/** @type {import('iaptic-js').IapticStripe} */
 const iaptic = IapticJS.createAdapter(window.IAPTIC_STRIPE_CREDENTIALS);
 
 function showMessage(type) {
@@ -507,7 +507,7 @@ function renderSubscriptionOffers(offers) {
 // Add this new function to handle one-time purchases
 async function handlePurchase(offerId) {
     try {
-        await iaptic.initCheckoutSession({
+        await iaptic.order({
             offerId,
             applicationUsername: 'user_dev',
             successUrl: returnUrl('success'),
