@@ -574,7 +574,7 @@ function returnUrl(withHash) {
 
 async function handleSubscription(offerId) {
     try {
-        await iaptic.initCheckoutSession({
+        await iaptic.order({
             offerId,
             applicationUsername: 'user_dev',
             successUrl: returnUrl('success'),
