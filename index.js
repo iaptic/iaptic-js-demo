@@ -48,15 +48,65 @@ function displaySubscriptionDetails(products, purchases) {
     if (purchases && purchases.length > 0) {
         const subscriptions = purchases.filter(p => p.renewalIntent && p.expirationDate);
         const purchase = subscriptions.find(p => !p.cancelationReason) || subscriptions[0];
+
+        // If no subscriptions found, these are one-time purchases only
+        if (!purchase) {
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Your Purchases</h3>
+                    </div>
+                    <div class="card-body">
+                        ${purchases.map(p => {
+                            const productId = p.productId.replace('stripe:', '');
+                            const product = products?.find(pr => pr.id === productId);
+                            const purchaseDate = new Date(p.purchaseDate).toLocaleDateString();
+                            return `
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <table class="table table-sm mb-0">
+                                            <tr>
+                                                <td class="text-muted">Product:</td>
+                                                <td>${product?.title || productId}</td>
+                                            </tr>
+                                            ${product?.description ? `
+                                            <tr>
+                                                <td class="text-muted">Description:</td>
+                                                <td>${product.description}</td>
+                                            </tr>
+                                            ` : ''}
+                                            <tr>
+                                                <td class="text-muted">Amount:</td>
+                                                <td>${IapticJS.Utils.formatCurrency(p.amountMicros, p.currency)}</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Purchase Date:</td>
+                                                <td>${purchaseDate}</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Status:</td>
+                                                <td><span class="badge bg-success-lt">Purchased</span></td>
+                                            </tr>
+                                        </table>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
         const startDate = new Date(purchase.purchaseDate).toLocaleDateString();
         const lastRenewal = new Date(purchase.lastRenewalDate).toLocaleDateString();
         const nextRenewal = new Date(purchase.expirationDate).toLocaleDateString();
-        
+
         // Find the corresponding product
         const productId = purchase.productId.replace('stripe:', '');
         const product = products?.find(p => p.id === productId);
         const offer = product?.offers.find(o => o.id === purchase.offerId);
-        
+
         container.innerHTML = `
             <div class="card">
                 <div class="card-header">
@@ -120,17 +170,17 @@ function displaySubscriptionDetails(products, purchases) {
                                     // Only keep subscription products
                                     if (product.type !== 'paid subscription') return false;
                                     // Only keep products with matching currency offers
-                                    const hasMatchingOffers = product.offers.some(offer => 
+                                    const hasMatchingOffers = product.offers.some(offer =>
                                         offer.pricingPhases.slice(-1)[0].currency.toLowerCase() === purchase.currency.toLowerCase()
                                     );
                                     // Keep if it's purchasable or if it's the current plan
-                                    return (hasMatchingOffers && product.metadata?.canPurchase !== 'false') || 
+                                    return (hasMatchingOffers && product.metadata?.canPurchase !== 'false') ||
                                            product.id === productId;
                                 })
                                 // Sort by monthly USD price
                                 .sort((a, b) => {
                                     const getMonthlyPrice = (product) => {
-                                        const monthlyOffer = product.offers.find(o => 
+                                        const monthlyOffer = product.offers.find(o =>
                                             o.pricingPhases.slice(-1)[0].currency.toLowerCase() === 'usd' &&
                                             o.pricingPhases.slice(-1)[0].billingPeriod.includes('M')
                                         );
@@ -140,14 +190,14 @@ function displaySubscriptionDetails(products, purchases) {
                                 })
                                 .map(product => {
                                     const isCurrentPlan = product.id === productId;
-                                    const matchingOffers = product.offers.filter(offer => 
+                                    const matchingOffers = product.offers.filter(offer =>
                                         offer.pricingPhases.slice(-1)[0].currency.toLowerCase() === purchase.currency.toLowerCase()
                                     );
-                                    
+
                                     if (matchingOffers.length === 0) return '';
-                                    
+
                                     const hasCurrentOffer = matchingOffers.some(o => o.id === purchase.offerId);
-                                    
+
                                     // Sort offers by billing period (monthly first)
                                     const sortedOffers = matchingOffers.sort((a, b) => {
                                         const aIsMonthly = a.pricingPhases.slice(-1)[0].billingPeriod.includes('M');
@@ -178,27 +228,27 @@ function displaySubscriptionDetails(products, purchases) {
                                                             </span>
                                                         </div>
                                                     </div>
-                                                    
+
                                                     <div class="pricing-options">
                                                         ${sortedOffers.map(offer => {
                                                             const phase = offer.pricingPhases.slice(-1)[0];
                                                             const isCurrentOffer = offer.id === purchase.offerId;
                                                             const period = IapticJS.Utils.formatBillingPeriodEN(phase.billingPeriod).toLowerCase();
-                                                            
+
                                                             return `
                                                                 <div class="mb-2 text-center">
                                                                     <div class="h4 mb-1">
                                                                         ${IapticJS.Utils.formatCurrency(phase.priceMicros, phase.currency)}
                                                                         <small class="text-muted">/${period}</small>
                                                                     </div>
-                                                                    ${isCurrentOffer 
+                                                                    ${isCurrentOffer
                                                                         ? isCurrentOfferCancelled
-                                                                            ? `<button class="btn btn-primary btn-sm" 
+                                                                            ? `<button class="btn btn-primary btn-sm"
                                                                                   onclick="handlePlanChange('${offer.id}')">
-                                                                               Renew 
+                                                                               Renew
                                                                            </button>`
                                                                             : '<span class="badge bg-primary-lt">Current Plan</span>'
-                                                                        : `<button class="btn btn-primary btn-sm" 
+                                                                        : `<button class="btn btn-primary btn-sm"
                                                                                   onclick="handlePlanChange('${offer.id}')">
                                                                                 Switch to ${period}
                                                                            </button>`
@@ -215,9 +265,9 @@ function displaySubscriptionDetails(products, purchases) {
                         </div>
                     </div>
                     <div class="mt-3">
-                        <button class="btn btn-sm" 
-                                data-bs-toggle="collapse" 
-                                data-bs-target="#technicalDetails" 
+                        <button class="btn btn-sm"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#technicalDetails"
                                 aria-expanded="false">
                             <span class="text-muted">Show technical details...</span>
                         </button>
@@ -242,9 +292,9 @@ function displaySubscriptionDetails(products, purchases) {
                                     </tr>
                                 </table>
                                 <div class="mt-3">
-                                    <button class="btn btn-sm" 
-                                            data-bs-toggle="collapse" 
-                                            data-bs-target="#rawJson" 
+                                    <button class="btn btn-sm"
+                                            data-bs-toggle="collapse"
+                                            data-bs-target="#rawJson"
                                             aria-expanded="false">
                                         <span class="text-muted">Show raw JSON...</span>
                                     </button>
@@ -293,7 +343,7 @@ async function displayPurchases() {
     } catch (error) {
         // Silently fail if no purchases found
         console.log('No active purchases found:', error);
-        container.innerHeML = '';
+        container.innerHTML = '';
         return [];
     }
 }
@@ -336,7 +386,7 @@ async function displayPrices(purchases) {
         const products = await iaptic.getProducts();
         
         // Refresh subscription details now that we have product information
-        const hasActiveSubscription = purchases && purchases.length > 0;
+        const hasActiveSubscription = purchases && purchases.some(p => p.renewalIntent && p.expirationDate);
         displaySubscriptionDetails(products, purchases);
         
         // Clear both containers
