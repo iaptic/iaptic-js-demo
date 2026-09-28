@@ -398,7 +398,7 @@ async function displayPrices(purchases) {
             p.type === 'paid subscription' && p.metadata?.canPurchase !== 'false'
         );
         const otherProducts = products.filter(p => 
-            (p.type === 'non_consumable' || p.type === 'consumable') && 
+            (p.type === 'non consumable' || p.type === 'consumable') && 
             p.metadata?.canPurchase !== 'false'
         );
         
